@@ -1,10 +1,14 @@
 import { useState, useRef } from 'react';
-import { toPng } from 'html-to-image';
+import { toPng, toSvg } from 'html-to-image';
+import { jsPDF } from 'jspdf';
 import { Download, Link2, Sparkles, QrCode } from 'lucide-react';
-import { QRTemplate, TextStyle, QR_TEMPLATES } from '@/types/qr-templates';
+import { QRTemplate, TextStyle, ExportSettings, QRHistoryItem, QR_TEMPLATES } from '@/types/qr-templates';
 import TemplateSelector from '@/components/TemplateSelector';
 import TextCustomizer from '@/components/TextCustomizer';
 import QRPreview from '@/components/QRPreview';
+import ExportOptions from '@/components/ExportOptions';
+import QRHistory from '@/components/QRHistory';
+import { useQRHistory } from '@/hooks/useQRHistory';
 import { toast } from 'sonner';
 
 const Index = () => {
@@ -16,8 +20,14 @@ const Index = () => {
     color: '#1a1a1a',
     fontSize: 16,
   });
+  const [exportSettings, setExportSettings] = useState<ExportSettings>({
+    format: 'png',
+    width: 512,
+    height: 512,
+  });
   const [isGenerated, setIsGenerated] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
+  const { history, saveToHistory, removeFromHistory, clearHistory } = useQRHistory();
 
   const handleGenerate = () => {
     if (!url.trim()) {
@@ -25,25 +35,95 @@ const Index = () => {
       return;
     }
     setIsGenerated(true);
+    saveToHistory(url, selectedTemplate.id, textStyle);
     toast.success('QR Code generated successfully!');
+  };
+
+  const handleHistorySelect = (item: QRHistoryItem) => {
+    setUrl(item.value);
+    const template = QR_TEMPLATES.find((t) => t.id === item.templateId);
+    if (template) {
+      setSelectedTemplate(template);
+    }
+    setTextStyle(item.textStyle);
+    setIsGenerated(true);
+    toast.success('QR Code restored from history');
   };
 
   const handleDownload = async () => {
     if (!previewRef.current) return;
 
     try {
-      const dataUrl = await toPng(previewRef.current, {
-        quality: 1,
-        pixelRatio: 3,
-        backgroundColor: selectedTemplate.bgColor,
-      });
+      const scale = exportSettings.width / 220; // 220 is the base QR size
+      const pixelRatio = Math.max(scale, 2);
 
-      const link = document.createElement('a');
-      link.download = `qr-code-${Date.now()}.png`;
-      link.href = dataUrl;
-      link.click();
-      toast.success('QR Code downloaded!');
+      if (exportSettings.format === 'png') {
+        const dataUrl = await toPng(previewRef.current, {
+          quality: 1,
+          pixelRatio,
+          backgroundColor: selectedTemplate.bgColor,
+          width: previewRef.current.offsetWidth,
+          height: previewRef.current.offsetHeight,
+        });
+
+        // Create a canvas to resize
+        const img = new Image();
+        img.src = dataUrl;
+        await new Promise((resolve) => (img.onload = resolve));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = exportSettings.width;
+        canvas.height = exportSettings.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = selectedTemplate.bgColor;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          const size = Math.min(exportSettings.width, exportSettings.height);
+          const x = (exportSettings.width - size) / 2;
+          const y = (exportSettings.height - size) / 2;
+          ctx.drawImage(img, x, y, size, size);
+        }
+
+        const link = document.createElement('a');
+        link.download = `qr-code-${Date.now()}.png`;
+        link.href = canvas.toDataURL('image/png', 1);
+        link.click();
+        toast.success('PNG downloaded!');
+      } else if (exportSettings.format === 'svg') {
+        const dataUrl = await toSvg(previewRef.current, {
+          backgroundColor: selectedTemplate.bgColor,
+        });
+
+        const link = document.createElement('a');
+        link.download = `qr-code-${Date.now()}.svg`;
+        link.href = dataUrl;
+        link.click();
+        toast.success('SVG downloaded!');
+      } else if (exportSettings.format === 'pdf') {
+        const dataUrl = await toPng(previewRef.current, {
+          quality: 1,
+          pixelRatio: 3,
+          backgroundColor: selectedTemplate.bgColor,
+        });
+
+        const pdf = new jsPDF({
+          orientation: exportSettings.width > exportSettings.height ? 'landscape' : 'portrait',
+          unit: 'px',
+          format: [exportSettings.width, exportSettings.height],
+        });
+
+        const size = Math.min(exportSettings.width, exportSettings.height) * 0.8;
+        const x = (exportSettings.width - size) / 2;
+        const y = (exportSettings.height - size) / 2;
+
+        pdf.setFillColor(selectedTemplate.bgColor);
+        pdf.rect(0, 0, exportSettings.width, exportSettings.height, 'F');
+        pdf.addImage(dataUrl, 'PNG', x, y, size, size);
+        pdf.save(`qr-code-${Date.now()}.pdf`);
+        toast.success('PDF downloaded!');
+      }
     } catch (error) {
+      console.error('Download error:', error);
       toast.error('Failed to download QR code');
     }
   };
@@ -113,6 +193,24 @@ const Index = () => {
                 onTextChange={setTextStyle}
               />
             </div>
+
+            {/* Export Options Card */}
+            <div className="qr-card">
+              <ExportOptions
+                settings={exportSettings}
+                onSettingsChange={setExportSettings}
+              />
+            </div>
+
+            {/* History Card */}
+            <div className="qr-card">
+              <QRHistory
+                history={history}
+                onSelect={handleHistorySelect}
+                onRemove={removeFromHistory}
+                onClear={clearHistory}
+              />
+            </div>
           </div>
 
           {/* Right Panel - Preview */}
@@ -138,6 +236,11 @@ const Index = () => {
                   />
                 </div>
 
+                {/* Export Info */}
+                <div className="text-center text-xs text-muted-foreground">
+                  Export: {exportSettings.width} × {exportSettings.height}px • {exportSettings.format.toUpperCase()}
+                </div>
+
                 {/* Download Button */}
                 <button
                   onClick={handleDownload}
@@ -145,7 +248,7 @@ const Index = () => {
                   className={`w-full ${isGenerated ? 'btn-primary' : 'btn-secondary opacity-50 cursor-not-allowed'}`}
                 >
                   <Download size={18} />
-                  Download PNG
+                  Download {exportSettings.format.toUpperCase()}
                 </button>
 
                 {!isGenerated && (
@@ -163,6 +266,7 @@ const Index = () => {
                 <li>• Use shorter URLs for cleaner QR codes</li>
                 <li>• High contrast templates scan better</li>
                 <li>• Add text to make your QR more engaging</li>
+                <li>• SVG format scales infinitely without quality loss</li>
               </ul>
             </div>
           </div>

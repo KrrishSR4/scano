@@ -19,6 +19,20 @@ export interface TextStyle {
   fontSize: number;
 }
 
+export interface ExportSettings {
+  format: 'png' | 'svg' | 'pdf';
+  width: number;
+  height: number;
+}
+
+export interface QRHistoryItem {
+  id: string;
+  value: string;
+  templateId: string;
+  textStyle: TextStyle;
+  createdAt: number;
+}
+
 export const QR_TEMPLATES: QRTemplate[] = [
   {
     id: 'minimal',
@@ -108,4 +122,11 @@ export const TEXT_PRESETS = [
   'Learn More',
   'Get Started',
   'Follow Us',
+];
+
+export const EXPORT_DIMENSIONS = [
+  { label: '256 × 256', width: 256, height: 256 },
+  { label: '512 × 512', width: 512, height: 512 },
+  { label: '1024 × 1024', width: 1024, height: 1024 },
+  { label: '2048 × 2048', width: 2048, height: 2048 },
 ];
